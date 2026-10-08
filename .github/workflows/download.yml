@@ -1,0 +1,61 @@
+# Downloads UKMON data and commits it to this repository.
+# Runs daily for recent days; run it manually (Actions → Download UKMON data →
+# Run workflow) with a start/end date to backfill a range.
+name: Download UKMON data
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      start:
+        description: 'First day (YYYY-MM-DD). Blank = 3 days ago'
+        required: false
+      end:
+        description: 'Last day (YYYY-MM-DD). Blank = today'
+        required: false
+      parquet:
+        description: 'Years of full parquet archives to fetch, space separated (e.g. "2025 2026")'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: download
+  cancel-in-progress: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download
+        env:
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          PARQUET: ${{ inputs.parquet }}
+        run: |
+          args=()
+          [ -n "$START" ] && args+=(--start "$START")
+          [ -n "$END" ] && args+=(--end "$END")
+          [ -n "$PARQUET" ] && args+=(--parquet $PARQUET)
+          # Commit whatever succeeded even if some days failed.
+          python scripts/download.py "${args[@]}" || echo "::warning::Some downloads failed; see log"
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "No new data"
+          else
+            git commit -m "Update UKMON data ($(date -u +%Y-%m-%d))"
+            git push
+          fi
